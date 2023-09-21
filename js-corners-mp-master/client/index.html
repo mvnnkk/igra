@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+
+    <style>
+        html {
+            font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+        }
+
+        #game>table td {
+            padding: 32px;
+            border: 2px black solid;
+        }
+
+        #currentPlayer {
+            padding: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <div style="position: absolute; top: 0; right: 0; bottom: 0; left: 0; background-color: pink; display: flex; align-items: center; justify-content: center; flex-direction: column;"
+        id="splash-screen">
+        <h1 style="font-size: 300%;">Уголки</h1>
+        <form id="connection-form">
+            <input type="text" name="address" value="localhost:9000" placeholder="Адрес сервера"/>
+            <input type="text" name="nickname" value="nickname" placeholder="Никнейм"/>
+            <button type="submit">Подключиться</button>
+        </form>
+        <div id="players-list" style="display: none;">
+            <p>Игроки:</p>
+            <ol>
+                <li id="player-list__player-1">Не подключён</li>
+                <li id="player-list__player-2">Не подключён</li>
+            </ol>
+        </div>
+    </div>
+
+    <div style="display: flex">
+        <div>
+            <p id="currentPlayer"></p>
+            <div id="game"></div>
+            <button type="button" style="margin-top: 16px" onclick="location.reload()">Перезапустить игру</button>
+        </div>
+    
+        <div style="margin-left: 16px">
+            <h3>Правила игры:</h3>
+            <p>Нужно поменяться местами.</p>
+    
+            <p>Как двигать фишки?</p>
+            <ol>
+                <li>подвинуть любую свою фишку на соседнюю пустую клетку.</li>
+                <li>«прыгнуть» через одну свою или чужую фишку, если за ней есть пустая клетка. </li>
+            </ol>
+    
+            <p>Для отмены выбора фишки кликнуть на нее второй раз.</p>
+    
+            <p>Побеждает тот, кто первым переместит свои фишки в «город» соперника и займет территорию.</p>
+        </div>
+    </div>
+    </div>
+
+    <script>
+        const splashScreenEl = document.querySelector('#splash-screen');
+        const connectionFormEl = document.querySelector('#connection-form');
+        const playersListEl = document.querySelector('#players-list');
+
+        connectionFormEl.addEventListener('submit', (e) => {
+            e.preventDefault();
+
+            const nickname = e.target.elements['nickname'].value;
+            const address = e.target.elements['address'].value;
+
+            gameFrame();
+            connect(nickname, address);
+        });
+
+        const gameEl = document.querySelector('#game');
+        const tableEl = document.createElement('table');
+        currentPlayerEl = document.querySelector('#currentPlayer');
+        gameEl.append(tableEl);
+
+        tableEl.innerHTML = '';
+        tableEl.innerHTML += '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+        tableEl.innerHTML += '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+        tableEl.innerHTML += '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+        tableEl.innerHTML += '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+        tableEl.innerHTML += '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+        tableEl.innerHTML += '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+        tableEl.innerHTML += '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+        tableEl.innerHTML += '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+
+        let stepPlayer = "1"; // 1 / 2 player
+        const playerColors = {
+            "0": 'white',
+            "1": 'pink',
+            "2": 'skyblue',
+        };
+        const playerEnemy = {
+            "1": "2",
+            "2": "1",
+        };
+
+        let selectedCell = null;
+        let winner = null;
+        let gameField = [];
+        let player = undefined;
+        let players = {
+            '1': null,
+            '2': null,
+        };
+        let inGame = false;
+        let isConnected = false;
+        let server = null;
+
+        function gameFrame() {
+            for (let row of gameField) {
+                for (let cell of row) {
+                    cell.style['background-color'] = playerColors[cell.getAttribute('player')];
+                    if (cell === selectedCell) {
+                        cell.style['border-color'] = 'red';
+                    } else {
+                        cell.style['border-color'] = 'black';
+                    }
+                }
+            }
+
+            currentPlayerEl.innerHTML = `Ход игрока #${stepPlayer} ${players[stepPlayer]} ${stepPlayer == player ? '(Вы)' : ''}`;
+            currentPlayerEl.style['background-color'] = playerColors[stepPlayer];
+
+            splashScreenEl.style['display'] = inGame ? 'none' : 'flex';
+            playersListEl.style.display = isConnected ? 'block' : 'none';
+            connectionFormEl.style.display = isConnected ? 'none' : 'block';
+
+            playersListEl.querySelector('#player-list__player-1').innerHTML = players['1'] ?? 'Не подключён';
+            playersListEl.querySelector('#player-list__player-2').innerHTML = players['2'] ?? 'Не подключён';
+
+        }
+
+        function selectCell(cell) {
+            selectedCell = cell;
+        }
+
+        function canMove(fromX, fromY, toX, toY) {
+            const deltaX = toX - fromX;
+            const deltaY = toY - fromY;
+
+            if (Math.abs(deltaX) <= 1 && Math.abs(deltaY) <= 1) {
+                return true;
+            }
+
+            if (
+                (Math.abs(deltaX) == 1 && Math.abs(deltaY) == 2)
+                || (Math.abs(deltaX) == 2 && Math.abs(deltaY) == 1)
+                || (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2)
+            ) {
+                return false;
+            }
+
+            return gameField[Number(fromX) + (deltaX / 2)][Number(fromY) + (deltaY / 2)].getAttribute('player') !== '0';
+        }
+
+        tableEl.querySelectorAll('td').forEach((cellEl) => {
+            cellEl.addEventListener('click', (event) => {
+                if (winner !== null) {
+                    alert(`Игра окончена. Победил игрок ${winner}. Перезапустите игру.`);
+                    return;
+                }
+
+                if (stepPlayer != player) {
+                    alert('Сейчас не Ваш ход.');
+                    return;
+                }
+
+                const x = event.target.getAttribute('x');
+                const y = event.target.getAttribute('y');
+                const selectedX = selectedCell?.getAttribute('x');
+                const selectedY = selectedCell?.getAttribute('y');
+
+                if (selectedCell === null) {
+                    if (event.target.getAttribute('player') === stepPlayer) {
+                        selectCell(event.target);
+                        gameFrame();
+                    } else if (event.target.getAttribute('player') !== '0') {
+                        alert('Выбирать можно только свои клетки.');
+                    }
+                } else {
+                    if (event.target === selectedCell) {
+                        selectCell(null);
+                        gameFrame();
+                        return;
+                    }
+
+                    if (!canMove(selectedX, selectedY, x, y)) {
+                        alert('Шашку можно перемещать только на одну клетку или через другую шашку.');
+                        return;
+                    }
+
+                    if (event.target.getAttribute('player') !== '0') {
+                        alert('Нельзя перемещать на занятые клетки.');
+                        return;
+                    }
+
+                    event.target.setAttribute('player', selectedCell.getAttribute('player'));
+                    selectedCell.setAttribute('player', '0');
+                    selectCell(null);
+
+                    gameFrame();
+                    
+                    server.send({
+                        action: 'move',
+                        fromX: selectedX,
+                        fromY: selectedY,
+                        toX: x,
+                        toY: y,
+                    });
+                }
+            });
+        });
+
+        for (let row of tableEl.children) {
+            let rowCells = [];
+            for (let cell of row.children[0].children) {
+                cell.setAttribute('x', gameField.length);
+                cell.setAttribute('y', rowCells.length);
+                cell.setAttribute('player', '0');
+                rowCells.push(cell);
+            }
+            gameField.push(rowCells);
+        }
+
+        function connect(nickname, address) {
+            const ws = new WebSocket(`ws://${address}`);
+            ws.ssend = ws.send;
+            ws.send = function (data) {
+                this.ssend(JSON.stringify(data));
+            }
+
+            ws.addEventListener('open', (e) => {
+                console.log(`Connected to ${address}.`);
+                ws.send({
+                    action: 'nickname',
+                    nickname,
+                });
+                isConnected = true;
+                gameFrame();
+            });
+            ws.addEventListener('message', (e) => {
+                const data = JSON.parse(e.data);
+                console.log(data);
+
+                switch (data.action) {
+                    case 'alert': {
+                        alert(data.text);
+                        break;
+                    }
+                    case 'update': {
+                        data.gameField.forEach((row, y) => row.forEach((cell, x) => {
+                            gameField[x][y].setAttribute('init-player', data.gameField[x][y].initPlayer);
+                            gameField[x][y].setAttribute('player', data.gameField[x][y].player);
+                        }));
+                        stepPlayer = data.stepPlayer;
+                        player = data.player;
+                        players = data.players;
+                        inGame = data.inGame;
+                        winner = data.winner;
+
+                        break;
+                    }
+                }
+                gameFrame();
+            });
+            ws.addEventListener('close', () => {
+                alert('Вы были отсоединены от сервера.');
+                isConnected = false;
+                gameFrame();
+            });
+            ws.addEventListener('error', () => {
+                alert('Во время соединения с сервером произошла ошибка, возможно он недоступен.');
+                isConnected = false;
+                gameFrame();
+            });
+
+            server = ws;
+        }
+    </script>
+</body>
+
+</html>
